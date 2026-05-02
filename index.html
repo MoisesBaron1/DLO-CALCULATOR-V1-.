@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DLO Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Barlow:wght@600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+ 
+<div class="app">
+ 
+  <!-- HEADER -->
+  <div class="header">
+    <p class="header-eyebrow">Architectural Systems</p>
+    <h1>DLO Calculator</h1>
+    <p>Daylight opening deductions for windows &amp; curtainwall systems.</p>
+  </div>
+ 
+  <!-- CONTROLS CARD -->
+  <div class="card">
+ 
+    <div class="section">
+      <span class="section-label">System</span>
+      <div class="btn-group">
+        <button class="btn" id="btn-lg225">LG225</button>
+        <button class="btn" id="btn-es8000t">ES-8000/T</button>
+        <button class="btn" id="btn-cw">CW (1032-7525-7000)</button>
+      </div>
+    </div>
+ 
+    <div class="section">
+      <span class="section-label">Mode</span>
+      <div class="btn-group">
+        <button class="btn" id="btn-frames">Frames</button>
+        <button class="btn" id="btn-lites">Lites</button>
+      </div>
+    </div>
+ 
+    <div class="section">
+      <span class="section-label">Dimensions (inches)</span>
+      <div class="inputs-grid">
+        <div class="field">
+          <label for="input-width">Width</label>
+          <input id="input-width" type="number" placeholder="0.00" step="0.0625" min="0" />
+        </div>
+        <div class="field">
+          <label for="input-height">Height</label>
+          <input id="input-height" type="number" placeholder="0.00" step="0.0625" min="0" />
+        </div>
+        <div class="field">
+          <label for="input-quantity">Qty</label>
+          <input id="input-quantity" type="number" placeholder="1" step="1" min="1" />
+        </div>
+      </div>
+    </div>
+ 
+  </div>
+ 
+  <!-- RESULTS CARD -->
+  <div class="card">
+    <span class="section-label">Results</span>
+    <div class="results-empty visible" id="results-empty">Select a system and mode to calculate.</div>
+    <div id="results-box"></div>
+  </div>
+ 
+  <!-- FOOTER -->
+  <div class="footer-top">
+    <span>Measurements in inches &middot; /16 fractions</span>
+    <span>DLO v1.0</span>
+  </div>
+ 
+  <div class="footer-contact">
+    <p class="footer-contact-title">For technical questions, comments or suggestions, contact <strong>Estimating ESW</strong></p>
+    <div class="footer-contact-links">
+    </div>
+  </div>
+ 
+ 
+</div>
+ 
+<script src="script.js"></script>
+</body>
+</html>
