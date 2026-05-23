@@ -1,0 +1,20 @@
+:root{
+  --bg:#0f1720;--card:#0b1220;--accent:#4f46e5;--muted:#9aa4b2;--text:#e6eef6
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071024 0%,#081127 100%);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px}
+.app{width:980px;max-width:98%;background:rgba(255,255,255,0.02);border-radius:12px;padding:24px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+header{margin-bottom:18px}
+header h1{margin:0;font-size:20px}
+.muted{color:var(--muted);font-size:13px;margin-top:6px}
+.controls{display:grid;gap:12px;border:1px solid rgba(255,255,255,0.03);padding:14px;border-radius:8px}
+.row{display:flex;align-items:center;gap:12px}
+.row label{width:80px;color:var(--muted);font-size:14px}
+select,input{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--text);padding:8px;border-radius:6px}
+.inputs{gap:18px}
+.inputs > div{flex:1;display:flex;flex-direction:column}
+.btn{background:var(--accent);color:#fff;padding:9px 14px;border-radius:8px;border:none;cursor:pointer}
+.btn-secondary{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+.results{margin-top:14px;padding:14px;border-radius:8px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.02)}
+#results{font-family:monospace;margin-top:8px;color:#dbeafe}
+.footer{margin-top:12px;text-align:center;color:var(--muted);font-size:13px}
