@@ -1,64 +1,94 @@
 /**
  * @fileoverview DLO Calculator - Enterprise Grade Application
  * Handles both Forward (Frame -> DLO) and Inverse (DLO -> Frame) calculations.
- * Encapsulated in an IIFE to prevent global namespace pollution.
+ * Data is persisted to Supabase cloud database.
  */
 
 (function () {
   'use strict';
 
   // ============================================================
-  // SYSTEM CONFIGURATION & DATA MANAGEMENT
+  // SUPABASE CONFIGURATION
   // ============================================================
-  
-  const DEFAULT_SYSTEMS = {
-    LG225: {
-      name: "LG225",
-      strategy: "perPiece",
-      frames: { single: 3.125, perPiece: 1.5625 },
-      lites:  { single: 3.125, perPiece: 1.5625 }
-    },
-    ES8000: {
-      name: "ES-8000/T",
-      strategy: "edgeCenter",
-      frames: { single: 5.5, jambEdge: 2.75, center: 3.75 },
-      lites:  { single: 5.5, jambEdge: 2.75, center: 3.75 }
-    },
-    CW: {
-      name: "CW (1032-7525-7000)",
-      strategy: "edgeCenter",
-      frames: { single: 5, jambEdge: 3.75, center: 2.5 },
-      lites:  { single: 5, jambEdge: 3.75, center: 2.5 }
-    }
-  };
+  const SUPABASE_URL = 'https://dpiqxmazfbvqgdqnpwdd.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_0LwxrMSBCDYy-t5UCld9KA_plNzAN_x';
 
+  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // ============================================================
+  // SYSTEM MANAGER (Cloud-backed via Supabase)
+  // ============================================================
   class SystemManager {
     constructor() {
-      this.systems = this.loadSystems();
+      this.systems = {};
     }
-    
-    loadSystems() {
-      const stored = localStorage.getItem('DLO_SYSTEMS');
-      if (stored) {
-        try { return JSON.parse(stored); } catch (e) { console.error('Failed to parse systems', e); }
+
+    /**
+     * Loads all systems from Supabase. Must be called with await.
+     */
+    async loadSystems() {
+      const { data, error } = await supabaseClient
+        .from('systems')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('Error loading systems from Supabase:', error.message);
+        return {};
       }
-      this.saveSystems(DEFAULT_SYSTEMS);
-      return DEFAULT_SYSTEMS;
+
+      // Convert the array from Supabase into an object keyed by ID
+      const systemsMap = {};
+      data.forEach(row => {
+        systemsMap[row.id] = {
+          name: row.name,
+          strategy: row.strategy,
+          frames: row.frames,
+          lites: row.lites
+        };
+      });
+
+      this.systems = systemsMap;
+      return systemsMap;
     }
 
-    saveSystems(systems) {
-      this.systems = systems;
-      localStorage.setItem('DLO_SYSTEMS', JSON.stringify(this.systems));
-    }
+    /**
+     * Saves (insert or update) a system to Supabase.
+     */
+    async saveSystem(id, config) {
+      const { error } = await supabaseClient
+        .from('systems')
+        .upsert({
+          id: id,
+          name: config.name,
+          strategy: config.strategy,
+          frames: config.frames,
+          lites: config.lites
+        }, { onConflict: 'id' });
 
-    saveSystem(id, config) {
+      if (error) {
+        console.error('Error saving system:', error.message);
+        throw error;
+      }
+
       this.systems[id] = config;
-      this.saveSystems(this.systems);
     }
 
-    deleteSystem(id) {
+    /**
+     * Deletes a system from Supabase.
+     */
+    async deleteSystem(id) {
+      const { error } = await supabaseClient
+        .from('systems')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting system:', error.message);
+        throw error;
+      }
+
       delete this.systems[id];
-      this.saveSystems(this.systems);
     }
   }
 
@@ -70,8 +100,8 @@
    * @enum {string}
    */
   const CalcDirection = {
-    FORWARD: 'forward', // Frame -> DLO
-    INVERSE: 'inverse'  // DLO -> Frame
+    FORWARD: 'forward',
+    INVERSE: 'inverse'
   };
 
   // ============================================================
@@ -79,7 +109,6 @@
   // ============================================================
   class DLOCalculator {
     constructor() {
-      // Application State
       this.state = {
         system: null,
         mode: null,
@@ -89,7 +118,6 @@
         qty: 0
       };
 
-      // DOM Elements Cache
       this.dom = {
         inputWidth:    document.getElementById('input-width'),
         inputHeight:   document.getElementById('input-height'),
@@ -105,16 +133,13 @@
         btnCopy:        document.getElementById('btn-copy'),
         toast:          document.getElementById('toast'),
         
-        // Buttons
         btnFrames: document.getElementById('btn-frames'),
         btnLites:  document.getElementById('btn-lites'),
 
-        // Toggle elements
         toggleInput:   document.getElementById('calc-direction-toggle'),
         labelForward:  document.getElementById('label-forward'),
         labelInverse:  document.getElementById('label-inverse'),
         
-        // Dynamic labels
         labelWidth:     document.getElementById('label-width'),
         labelHeight:    document.getElementById('label-height'),
         dimLabel:       document.getElementById('dimensions-label'),
@@ -124,42 +149,45 @@
       };
 
       this.initEvents();
-      this.renderSystemButtons();
     }
 
-    /**
-     * Initializes all event listeners for the application.
-     */
+    showLoading() {
+      if (this.dom.sysBtnContainer) {
+        this.dom.sysBtnContainer.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">Loading systems...</span>';
+      }
+    }
+
     initEvents() {
       const { dom } = this;
 
-      // Mode Buttons
       const modeBtns = [dom.btnFrames, dom.btnLites];
       dom.btnFrames.onclick = () => this.setMode('frames', dom.btnFrames, modeBtns);
       dom.btnLites.onclick  = () => this.setMode('lites', dom.btnLites, modeBtns);
 
-      // Inputs
       dom.inputWidth.addEventListener('input', () => this.calculate());
       dom.inputHeight.addEventListener('input', () => this.calculate());
       dom.inputQuantity.addEventListener('input', () => this.calculate());
 
-      // Toggle Direction
       dom.toggleInput.addEventListener('change', (e) => this.toggleDirection(e.target.checked));
-
-      // Copy
       dom.btnCopy.addEventListener('click', () => this.copyToClipboard());
     }
 
     renderSystemButtons() {
-      this.dom.sysBtnContainer.innerHTML = ''; // clear old buttons
+      this.dom.sysBtnContainer.innerHTML = '';
       const systems = systemManager.systems;
+
+      if (Object.keys(systems).length === 0) {
+        this.dom.sysBtnContainer.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">No systems yet. Use Admin to add one.</span>';
+        return;
+      }
+
       let activeFound = false;
 
       Object.keys(systems).forEach(sysId => {
         const config = systems[sysId];
         const btn = document.createElement('button');
         btn.className = 'btn';
-        btn.innerHTML = config.name;
+        btn.textContent = config.name;
         
         if (this.state.system === sysId) {
           btn.classList.add('active');
@@ -176,15 +204,12 @@
         this.dom.sysBtnContainer.appendChild(btn);
       });
 
-      if (!activeFound && Object.keys(systems).length > 0) {
+      if (!activeFound) {
         this.state.system = null;
       }
       this.calculate();
     }
 
-    /**
-     * Sets the active mode (frames/lites).
-     */
     setMode(modeId, activeBtn, group) {
       group.forEach(b => b.classList.remove('active'));
       activeBtn.classList.add('active');
@@ -192,16 +217,10 @@
       this.calculate();
     }
 
-    /**
-     * Toggles between Forward and Inverse calculation modes.
-     * @param {boolean} isInverse 
-     */
     toggleDirection(isInverse) {
       this.state.direction = isInverse ? CalcDirection.INVERSE : CalcDirection.FORWARD;
-      
       const { dom } = this;
       
-      // Update UI labels
       if (isInverse) {
         dom.labelForward.classList.remove('active');
         dom.labelInverse.classList.add('active');
@@ -221,35 +240,28 @@
       this.calculate();
     }
 
-    /**
-     * Main Controller: Parses inputs and dispatches to appropriate calculation strategy.
-     */
     calculate() {
       const width    = parseFloat(this.dom.inputWidth.value);
       const height   = parseFloat(this.dom.inputHeight.value);
       const quantity = parseInt(this.dom.inputQuantity.value);
 
       if (!this.state.system || !this.state.mode || isNaN(quantity) || quantity <= 0) {
-        this.showEmpty(); 
-        return;
-      }
-
-      // Determine relevant measurement based on mode
-      const measurement = (this.state.mode === 'frames') ? width : height;
-      if (isNaN(measurement) || measurement <= 0) { 
-        this.showEmpty(); 
-        return; 
-      }
-
-      const config = systemManager.systems[this.state.system];
-      if (!config) {
         this.showEmpty();
         return;
       }
+
+      const measurement = (this.state.mode === 'frames') ? width : height;
+      if (isNaN(measurement) || measurement <= 0) {
+        this.showEmpty();
+        return;
+      }
+
+      const config = systemManager.systems[this.state.system];
+      if (!config) { this.showEmpty(); return; }
+
       const deductions = config[this.state.mode];
       const strategy = config.strategy || 'edgeCenter';
 
-      // Strategy execution
       if (this.state.direction === CalcDirection.FORWARD) {
         this.executeForwardMath(measurement, quantity, deductions, strategy);
       } else {
@@ -257,76 +269,48 @@
       }
     }
 
-    /**
-     * Strategy: Calculate DLO from Frame (Forward)
-     */
     executeForwardMath(measurement, quantity, deductions, strategy) {
       let results = [];
 
       if (quantity === 1) {
         results.push(measurement - deductions.single);
-      } 
-      else if (strategy === 'perPiece') {
+      } else if (strategy === 'perPiece') {
         const base = (measurement - deductions.perPiece) / quantity;
         for (let i = 0; i < quantity; i++) {
           results.push(base - deductions.perPiece);
         }
-      } 
-      else if (strategy === 'edgeCenter') {
-        let base = (measurement / quantity);
+      } else {
+        const base = measurement / quantity;
         for (let i = 0; i < quantity; i++) {
-          const isJambEdge = (i === 0 || i === quantity - 1);
-          results.push(isJambEdge ? (base - deductions.jambEdge) : (base - deductions.center));
-        }
-      }
-      else if (strategy === 'edgeCenterSingle') {
-        // Fallback for custom logic if added
-        let base = ((measurement - deductions.single) / quantity);
-        for (let i = 0; i < quantity; i++) {
-          const isJambEdge = (i === 0 || i === quantity - 1);
-          results.push(isJambEdge ? (base - deductions.jambEdge) : (base - deductions.center));
+          const isEdge = (i === 0 || i === quantity - 1);
+          results.push(isEdge ? (base - deductions.jambEdge) : (base - deductions.center));
         }
       }
 
-      // Prevent negatives
       results = results.map(r => Math.max(0, r));
-      
       this.state.lastResults = results;
       this.state.totalMeasurement = measurement;
       this.state.qty = quantity;
-
       this.renderResultsForward();
     }
 
-    /**
-     * Strategy: Calculate Total Frame from DLO (Inverse)
-     */
     executeInverseMath(inputDLO, quantity, deductions, strategy) {
       let totalFrame = 0;
 
       if (quantity === 1) {
         totalFrame = inputDLO + deductions.single;
-      } 
-      else if (strategy === 'perPiece') {
+      } else if (strategy === 'perPiece') {
         totalFrame = (quantity * inputDLO) + ((quantity + 1) * deductions.perPiece);
-      } 
-      else if (strategy === 'edgeCenter') {
+      } else {
         totalFrame = (quantity * inputDLO) + (2 * deductions.jambEdge) + ((quantity - 2) * deductions.center);
-      } 
-      else if (strategy === 'edgeCenterSingle') {
-        totalFrame = (quantity * inputDLO) + deductions.single + (2 * deductions.jambEdge) + ((quantity - 2) * deductions.center);
       }
 
       this.state.lastResults = [totalFrame];
-      this.state.totalMeasurement = inputDLO; // the DLO requested
+      this.state.totalMeasurement = inputDLO;
       this.state.qty = quantity;
-
       this.renderResultsInverse(totalFrame);
     }
 
-    /**
-     * Returns the name of the structural part for the given DLO index.
-     */
     getPartName(i, qty, mode) {
       if (qty <= 1) return '';
       if (mode === 'frames') {
@@ -339,9 +323,6 @@
       }
     }
 
-    /**
-     * Hides results and shows awaiting prompt
-     */
     showEmpty() {
       this.dom.resultsContent.classList.remove('visible');
       this.dom.resultsEmpty.classList.add('visible');
@@ -349,9 +330,6 @@
       this.state.lastResults = [];
     }
 
-    /**
-     * Renders Forward Mode results (list of DLOs)
-     */
     renderResultsForward() {
       this.dom.resultsEmpty.classList.remove('visible');
       this.dom.resultsContent.classList.add('visible');
@@ -371,10 +349,8 @@
         const row = document.createElement('div');
         row.className = 'result-row' + (isEdge ? ' edge' : '');
         row.style.animationDelay = `${i * 0.05}s`;
-
         const partName = this.getPartName(i, list.length, this.state.mode);
         const partSuffix = partName ? ` &middot; ${partName}` : '';
-
         row.innerHTML = `
           <span class="row-label">${label} DLO ${i + 1}${partSuffix}</span>
           <span class="row-value">${this.decimalToFraction(value)}</span>
@@ -383,9 +359,6 @@
       });
     }
 
-    /**
-     * Renders Inverse Mode results (single Total Frame)
-     */
     renderResultsInverse(totalFrame) {
       this.dom.resultsEmpty.classList.remove('visible');
       this.dom.resultsContent.classList.add('visible');
@@ -406,18 +379,14 @@
       this.dom.resultsBox.appendChild(row);
     }
 
-    /**
-     * Copies structured results to user's clipboard
-     */
     copyToClipboard() {
       if (this.state.lastResults.length === 0) return;
-      
       const config = systemManager.systems[this.state.system];
       if (!config) return;
 
       let textToCopy = `${config.name} - ${this.state.mode.toUpperCase()}\n`;
       textToCopy += `Mode: ${this.state.direction === CalcDirection.FORWARD ? 'Frame to DLO' : 'DLO to Frame'}\n`;
-      
+
       if (this.state.direction === CalcDirection.FORWARD) {
         textToCopy += `Total Dim: ${this.decimalToFraction(this.state.totalMeasurement)} | Qty: ${this.state.qty}\n`;
         textToCopy += `--------------------------\n`;
@@ -438,9 +407,6 @@
       });
     }
 
-    /**
-     * Utility: Converts decimal to closest /16 inch fraction
-     */
     decimalToFraction(n) {
       if (n <= 0) return '0"';
       const whole = Math.trunc(n);
@@ -461,62 +427,56 @@
   }
 
   // ============================================================
-  // ADMIN PANEL LOGIC
+  // ADMIN PANEL (async-aware for Supabase)
   // ============================================================
   class AdminPanel {
     constructor(calculatorInstance) {
       this.calculator = calculatorInstance;
       this.editingSystemId = null;
 
-      // DOM Elements
       this.dom = {
-        btnLoginOpen: document.getElementById('btn-admin-login'),
-        loginModal: document.getElementById('admin-login-modal'),
-        passwordInput: document.getElementById('admin-password'),
-        btnSubmitLogin: document.getElementById('btn-submit-login'),
-        btnCancelLogin: document.getElementById('btn-cancel-login'),
+        btnLoginOpen:     document.getElementById('btn-admin-login'),
+        loginModal:       document.getElementById('admin-login-modal'),
+        passwordInput:    document.getElementById('admin-password'),
+        btnSubmitLogin:   document.getElementById('btn-submit-login'),
+        btnCancelLogin:   document.getElementById('btn-cancel-login'),
 
-        dashboardModal: document.getElementById('admin-dashboard-modal'),
-        btnCloseAdmin: document.getElementById('btn-close-admin'),
-        systemList: document.getElementById('admin-system-list'),
-        btnAddSystem: document.getElementById('btn-add-system'),
-        
-        systemForm: document.getElementById('admin-system-form'),
-        emptyState: document.getElementById('admin-empty-state'),
-        formTitle: document.getElementById('form-title'),
-        
-        // Form Fields
-        inputId: document.getElementById('sys-id'),
-        inputName: document.getElementById('sys-name'),
-        inputStrategy: document.getElementById('sys-strategy'),
+        dashboardModal:   document.getElementById('admin-dashboard-modal'),
+        btnCloseAdmin:    document.getElementById('btn-close-admin'),
+        systemList:       document.getElementById('admin-system-list'),
+        btnAddSystem:     document.getElementById('btn-add-system'),
 
-        // Frames
-        frameSingle: document.getElementById('sys-frame-single'),
-        frameEdge: document.getElementById('sys-frame-edge'),
-        frameCenter: document.getElementById('sys-frame-center'),
-        framePerPiece: document.getElementById('sys-frame-perpiece'),
-        
-        // Lites
-        liteSingle: document.getElementById('sys-lite-single'),
-        liteEdge: document.getElementById('sys-lite-edge'),
-        liteCenter: document.getElementById('sys-lite-center'),
-        litePerPiece: document.getElementById('sys-lite-perpiece'),
-        
-        // Buttons
-        btnSaveSystem: document.getElementById('btn-save-system'),
-        btnCancelSystem: document.getElementById('btn-cancel-system'),
-        btnDeleteSystem: document.getElementById('btn-delete-system')
+        systemForm:       document.getElementById('admin-system-form'),
+        emptyState:       document.getElementById('admin-empty-state'),
+        formTitle:        document.getElementById('form-title'),
+
+        inputId:          document.getElementById('sys-id'),
+        inputName:        document.getElementById('sys-name'),
+        inputStrategy:    document.getElementById('sys-strategy'),
+
+        frameSingle:      document.getElementById('sys-frame-single'),
+        frameEdge:        document.getElementById('sys-frame-edge'),
+        frameCenter:      document.getElementById('sys-frame-center'),
+        framePerPiece:    document.getElementById('sys-frame-perpiece'),
+
+        liteSingle:       document.getElementById('sys-lite-single'),
+        liteEdge:         document.getElementById('sys-lite-edge'),
+        liteCenter:       document.getElementById('sys-lite-center'),
+        litePerPiece:     document.getElementById('sys-lite-perpiece'),
+
+        btnSaveSystem:    document.getElementById('btn-save-system'),
+        btnCancelSystem:  document.getElementById('btn-cancel-system'),
+        btnDeleteSystem:  document.getElementById('btn-delete-system')
       };
 
-      if(this.dom.btnLoginOpen) {
-          this.initEvents();
+      if (this.dom.btnLoginOpen) {
+        this.initEvents();
       }
     }
 
     initEvents() {
       const { dom } = this;
 
-      // Login Modal
       dom.btnLoginOpen.addEventListener('click', () => {
         dom.passwordInput.value = '';
         dom.loginModal.classList.remove('hidden');
@@ -532,20 +492,19 @@
         if (e.key === 'Enter') this.handleLogin();
       });
 
-      // Dashboard
       dom.btnCloseAdmin.addEventListener('click', () => {
         dom.dashboardModal.classList.add('hidden');
       });
 
       dom.btnAddSystem.addEventListener('click', () => this.showForm(null));
-      
+
       dom.inputStrategy.addEventListener('change', (e) => this.updateFormVisibility(e.target.value));
 
       dom.btnCancelSystem.addEventListener('click', () => {
         dom.systemForm.classList.add('hidden');
         dom.emptyState.classList.remove('hidden');
         this.editingSystemId = null;
-        this.renderSystemList(); // clear active selection
+        this.renderSystemList();
       });
 
       dom.btnDeleteSystem.addEventListener('click', () => this.deleteSystem());
@@ -556,8 +515,7 @@
     }
 
     handleLogin() {
-      const pwd = this.dom.passwordInput.value;
-      if (pwd === 'MoisesBaron1') {
+      if (this.dom.passwordInput.value === 'MoisesBaron1') {
         this.dom.loginModal.classList.add('hidden');
         this.openDashboard();
       } else {
@@ -565,18 +523,28 @@
       }
     }
 
-    openDashboard() {
+    async openDashboard() {
       this.dom.dashboardModal.classList.remove('hidden');
       this.dom.systemForm.classList.add('hidden');
       this.dom.emptyState.classList.remove('hidden');
+      this.dom.systemList.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">Loading...</span>';
       this.editingSystemId = null;
+
+      // Refresh systems from Supabase every time the dashboard is opened
+      await systemManager.loadSystems();
+      this.calculator.renderSystemButtons();
       this.renderSystemList();
     }
 
     renderSystemList() {
       const systems = systemManager.systems;
       this.dom.systemList.innerHTML = '';
-      
+
+      if (Object.keys(systems).length === 0) {
+        this.dom.systemList.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">No systems found.</span>';
+        return;
+      }
+
       Object.keys(systems).forEach(id => {
         const item = document.createElement('div');
         item.className = 'system-list-item' + (this.editingSystemId === id ? ' active' : '');
@@ -589,8 +557,8 @@
     updateFormVisibility(strategy) {
       const edgeCenterFields = document.querySelectorAll('.math-edge-center');
       const perPieceFields = document.querySelectorAll('.math-per-piece');
-      
-      if (strategy === 'edgeCenter' || strategy === 'edgeCenterSingle') {
+
+      if (strategy === 'edgeCenter') {
         edgeCenterFields.forEach(el => el.classList.remove('hidden'));
         perPieceFields.forEach(el => el.classList.add('hidden'));
       } else {
@@ -603,99 +571,116 @@
       this.editingSystemId = id;
       this.dom.emptyState.classList.add('hidden');
       this.dom.systemForm.classList.remove('hidden');
-      this.renderSystemList(); // update active state on sidebar
+      this.renderSystemList();
 
       if (id) {
-        // Edit mode
         this.dom.formTitle.textContent = 'Edit System';
         this.dom.inputId.value = id;
-        this.dom.inputId.disabled = true; // don't change ID of existing
+        this.dom.inputId.disabled = true;
         this.dom.btnDeleteSystem.style.display = 'inline-block';
-        
+
         const config = systemManager.systems[id];
         this.dom.inputName.value = config.name;
         this.dom.inputStrategy.value = config.strategy || 'edgeCenter';
-        
-        // Fill frames
-        this.dom.frameSingle.value = config.frames.single || 0;
-        this.dom.frameEdge.value = config.frames.jambEdge || 0;
-        this.dom.frameCenter.value = config.frames.center || 0;
+
+        this.dom.frameSingle.value   = config.frames.single   || 0;
+        this.dom.frameEdge.value     = config.frames.jambEdge || 0;
+        this.dom.frameCenter.value   = config.frames.center   || 0;
         this.dom.framePerPiece.value = config.frames.perPiece || 0;
-        
-        // Fill lites
-        this.dom.liteSingle.value = config.lites.single || 0;
-        this.dom.liteEdge.value = config.lites.jambEdge || 0;
-        this.dom.liteCenter.value = config.lites.center || 0;
-        this.dom.litePerPiece.value = config.lites.perPiece || 0;
+
+        this.dom.liteSingle.value    = config.lites.single    || 0;
+        this.dom.liteEdge.value      = config.lites.jambEdge  || 0;
+        this.dom.liteCenter.value    = config.lites.center    || 0;
+        this.dom.litePerPiece.value  = config.lites.perPiece  || 0;
 
         this.updateFormVisibility(config.strategy || 'edgeCenter');
-
       } else {
-        // Add mode
         this.dom.formTitle.textContent = 'Add New System';
         this.dom.inputId.value = '';
         this.dom.inputId.disabled = false;
         this.dom.btnDeleteSystem.style.display = 'none';
-        
         this.dom.systemForm.reset();
         this.dom.inputStrategy.value = 'edgeCenter';
         this.updateFormVisibility('edgeCenter');
       }
     }
 
-    saveSystem() {
-      const id = this.dom.inputId.value.trim();
+    async saveSystem() {
+      const id = this.dom.inputId.value.trim().toUpperCase().replace(/\s+/g, '_');
       if (!id) return;
 
       const strategy = this.dom.inputStrategy.value;
       const config = {
-        name: this.dom.inputName.value,
-        strategy: strategy,
-        frames: {
-          single: parseFloat(this.dom.frameSingle.value) || 0,
-        },
-        lites: {
-          single: parseFloat(this.dom.liteSingle.value) || 0,
-        }
+        name: this.dom.inputName.value.trim(),
+        strategy,
+        frames: { single: parseFloat(this.dom.frameSingle.value) || 0 },
+        lites:  { single: parseFloat(this.dom.liteSingle.value)  || 0 }
       };
 
-      if (strategy === 'edgeCenter' || strategy === 'edgeCenterSingle') {
-        config.frames.jambEdge = parseFloat(this.dom.frameEdge.value) || 0;
-        config.frames.center = parseFloat(this.dom.frameCenter.value) || 0;
-        config.lites.jambEdge = parseFloat(this.dom.liteEdge.value) || 0;
-        config.lites.center = parseFloat(this.dom.liteCenter.value) || 0;
+      if (strategy === 'edgeCenter') {
+        config.frames.jambEdge = parseFloat(this.dom.frameEdge.value)   || 0;
+        config.frames.center   = parseFloat(this.dom.frameCenter.value) || 0;
+        config.lites.jambEdge  = parseFloat(this.dom.liteEdge.value)    || 0;
+        config.lites.center    = parseFloat(this.dom.liteCenter.value)  || 0;
       } else {
         config.frames.perPiece = parseFloat(this.dom.framePerPiece.value) || 0;
-        config.lites.perPiece = parseFloat(this.dom.litePerPiece.value) || 0;
+        config.lites.perPiece  = parseFloat(this.dom.litePerPiece.value)  || 0;
       }
 
-      systemManager.saveSystem(id, config);
-      this.calculator.renderSystemButtons(); // update main UI
+      this.dom.btnSaveSystem.textContent = 'Saving...';
+      this.dom.btnSaveSystem.disabled = true;
 
-      this.dom.systemForm.classList.add('hidden');
-      this.dom.emptyState.classList.remove('hidden');
-      this.editingSystemId = null;
-      this.renderSystemList();
-    }
-
-    deleteSystem() {
-      if (!this.editingSystemId) return;
-      if (confirm('Are you sure you want to delete this system?')) {
-        systemManager.deleteSystem(this.editingSystemId);
+      try {
+        await systemManager.saveSystem(id, config);
         this.calculator.renderSystemButtons();
-        
         this.dom.systemForm.classList.add('hidden');
         this.dom.emptyState.classList.remove('hidden');
         this.editingSystemId = null;
         this.renderSystemList();
+      } catch (err) {
+        alert('Error saving system: ' + err.message);
+      } finally {
+        this.dom.btnSaveSystem.textContent = 'Save System';
+        this.dom.btnSaveSystem.disabled = false;
+      }
+    }
+
+    async deleteSystem() {
+      if (!this.editingSystemId) return;
+      if (!confirm('Are you sure you want to delete this system?')) return;
+
+      this.dom.btnDeleteSystem.textContent = 'Deleting...';
+      this.dom.btnDeleteSystem.disabled = true;
+
+      try {
+        await systemManager.deleteSystem(this.editingSystemId);
+        this.calculator.renderSystemButtons();
+        this.dom.systemForm.classList.add('hidden');
+        this.dom.emptyState.classList.remove('hidden');
+        this.editingSystemId = null;
+        this.renderSystemList();
+      } catch (err) {
+        alert('Error deleting system: ' + err.message);
+      } finally {
+        this.dom.btnDeleteSystem.textContent = 'Delete';
+        this.dom.btnDeleteSystem.disabled = false;
       }
     }
   }
 
-  // Initialize App on DOM Load
-  document.addEventListener('DOMContentLoaded', () => {
-    window.dloApp = new DLOCalculator();
-    window.adminPanel = new AdminPanel(window.dloApp);
+  // ============================================================
+  // BOOTSTRAP: Initialize App asynchronously
+  // ============================================================
+  document.addEventListener('DOMContentLoaded', async () => {
+    const calculator = new DLOCalculator();
+    calculator.showLoading();
+
+    // Load systems from Supabase before rendering
+    await systemManager.loadSystems();
+    calculator.renderSystemButtons();
+
+    window.dloApp = calculator;
+    window.adminPanel = new AdminPanel(calculator);
   });
 
 })();
